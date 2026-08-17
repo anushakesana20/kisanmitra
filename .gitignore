@@ -1,0 +1,6 @@
+node_modules/
+db/kisanmitra.db
+.env
+*.db
+*.db-wal
+*.db-shm
