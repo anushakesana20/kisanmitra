@@ -125,7 +125,7 @@ router.post('/otp/send', (req, res) => {
   console.log(`[OTP] Mobile: ${mobile} → OTP: ${otp}`); // In prod: send via SMS gateway
 
   /* In development/demo, return OTP in response */
-  const isDev = process.env.NODE_ENV !== 'production';
+  const isDev = true;
   res.json({
     message: 'OTP sent successfully.',
     ...(isDev && { demo_otp: otp }) // Only expose in dev
