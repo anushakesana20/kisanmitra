@@ -113,72 +113,161 @@ router.post('/login', async (req, res) => {
 /* ── POST /api/auth/otp/send ─────────────────────── */
 /* For demo: generates OTP and returns it (in production, send via SMS) */
 
+/* ── POST /api/auth/otp/send ─────────────────────── */
+/* Demo OTP login */
+
 const otpStore = new Map();
+
 router.post('/otp/send', (req, res) => {
-  const { mobile } = req.body;
-  if (!mobile || !/^\d{10}$/.test(mobile))
-    return res.status(400).json({ error: 'Valid 10-digit mobile number required.' });
-
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  otpStore.set(mobile, { otp, expiresAt: Date.now() + 10 * 60 * 1000 }); // 10 min
-
-  console.log(`[OTP] Mobile: ${mobile} → OTP: ${otp}`); // In prod: send via SMS gateway
-
-  /* In development/demo, return OTP in response */
-  const isDev = true;
-  res.json({
-    message: 'OTP sent successfully.',
-    ...(isDev && { demo_otp: otp }) // Only expose in dev
-  });
-});
-
-/* ── POST /api/auth/otp/verify ──────────────────── */
-router.post('/otp/verify', async (req, res) => {
   try {
-    const { mobile, otp, name, state, land_acres } = req.body;
-    if (!mobile || !otp)
-      return res.status(400).json({ error: 'Mobile and OTP are required.' });
+    const mobile = String(req.body.mobile || '').replace(/\D/g, '');
 
-    const stored = otpStore.get(mobile);
-    if (!stored)
-      return res.status(400).json({ error: 'No OTP found for this number. Please request again.' });
-    if (Date.now() > stored.expiresAt)
-      return res.status(400).json({ error: 'OTP expired. Please request a new one.' });
-    if (stored.otp !== otp.trim())
-      return res.status(400).json({ error: 'Incorrect OTP. Please try again.' });
-
-    otpStore.delete(mobile);
-
-    const db = getDb();
-    let user = db.get('SELECT * FROM users WHERE mobile = ?', [mobile]);
-
-    if (!user) {
-      /* Auto-create account on first OTP login */
-      const autoName = name || 'Farmer';
-      const tempHash = await bcrypt.hash(Math.random().toString(36), 12);
-      db.run(
-        `INSERT INTO users (mobile, password_hash, name, fname, lname, state, land_acres)
-         VALUES (?, ?, ?, ?, '', ?, ?)`,
-        [mobile, tempHash, autoName, autoName, state || '', parseFloat(land_acres) || 0]
-      );
-      user = db.get('SELECT * FROM users WHERE mobile = ?', [mobile]);
-
-      db.run(
-        `INSERT INTO notifications (user_id, type, severity, icon, title, body)
-         VALUES (?, 'info', 'low', '🎉', 'Welcome to KisanMitra!', 'Your account is ready. Set your location to get personalised weather and crop advice.')`,
-        [user.id]
-      );
+    if (!/^\d{10}$/.test(mobile)) {
+      return res.status(400).json({
+        error: 'Valid 10-digit mobile number required.'
+      });
     }
 
-    const token = signToken(user.id);
-    setCookie(res, token);
-    res.json({ token, user: safeUser(user) });
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    otpStore.set(mobile, {
+      otp: otp,
+      expiresAt: Date.now() + 10 * 60 * 1000
+    });
+
+    console.log(`[OTP] Mobile: ${mobile} -> OTP: ${otp}`);
+
+    res.json({
+      message: 'OTP sent successfully.',
+      demo_otp: otp
+    });
+
   } catch (err) {
-    console.error('OTP verify error:', err);
-    res.status(500).json({ error: 'Verification failed. Please try again.' });
+    console.error('OTP send error:', err);
+
+    res.status(500).json({
+      error: 'Failed to send OTP. Please try again.'
+    });
   }
 });
 
+
+/* ── POST /api/auth/otp/verify ───────────────────── */
+
+router.post('/otp/verify', async (req, res) => {
+  try {
+    const mobile = String(req.body.mobile || '').replace(/\D/g, '');
+    const otp = String(req.body.otp || '').trim();
+
+    if (!/^\d{10}$/.test(mobile)) {
+      return res.status(400).json({
+        error: 'Valid 10-digit mobile number required.'
+      });
+    }
+
+    if (!/^\d{6}$/.test(otp)) {
+      return res.status(400).json({
+        error: 'Enter the 6-digit OTP.'
+      });
+    }
+
+    const stored = otpStore.get(mobile);
+
+    if (!stored) {
+      return res.status(400).json({
+        error: 'No OTP found for this number. Please request again.'
+      });
+    }
+
+    if (Date.now() > stored.expiresAt) {
+      otpStore.delete(mobile);
+
+      return res.status(400).json({
+        error: 'OTP expired. Please request a new one.'
+      });
+    }
+
+    if (stored.otp !== otp) {
+      return res.status(400).json({
+        error: 'Incorrect OTP. Please try again.'
+      });
+    }
+
+    // OTP is correct
+    otpStore.delete(mobile);
+
+    const db = getDb();
+
+    let user = db.get(
+      'SELECT * FROM users WHERE mobile = ?',
+      [mobile]
+    );
+
+    // Create account automatically if user does not exist
+    if (!user) {
+      const autoName = req.body.name || 'Farmer';
+      const state = req.body.state || '';
+      const landAcres = parseFloat(req.body.land_acres) || 0;
+
+      const tempHash = await bcrypt.hash(
+        Math.random().toString(36),
+        12
+      );
+
+      db.run(
+        `INSERT INTO users
+        (mobile, password_hash, name, fname, lname, state, land_acres)
+        VALUES (?, ?, ?, ?, '', ?, ?)`,
+        [
+          mobile,
+          tempHash,
+          autoName,
+          autoName,
+          state,
+          landAcres
+        ]
+      );
+
+      user = db.get(
+        'SELECT * FROM users WHERE mobile = ?',
+        [mobile]
+      );
+
+      if (user) {
+        db.run(
+          `INSERT INTO notifications
+          (user_id, type, severity, icon, title, body)
+          VALUES (?, 'info', 'low', '🎉', 'Welcome to KisanMitra!',
+          'Your account is ready. Set your location to get personalised weather and crop advice.')`,
+          [user.id]
+        );
+      }
+    }
+
+    if (!user) {
+      return res.status(500).json({
+        error: 'Unable to create or find your account.'
+      });
+    }
+
+    const token = signToken(user.id);
+
+    setCookie(res, token);
+
+    res.json({
+      message: 'OTP verified successfully.',
+      token: token,
+      user: safeUser(user)
+    });
+
+  } catch (err) {
+    console.error('OTP verify error:', err);
+
+    res.status(500).json({
+      error: 'Verification failed. Please try again.'
+    });
+  }
+});
 /* ── POST /api/auth/logout ───────────────────────── */
 router.post('/logout', requireAuth, (req, res) => {
   res.clearCookie('km_token');
