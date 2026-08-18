@@ -112,7 +112,7 @@ router.post('/login', async (req, res) => {
 
 /* ── POST /api/auth/otp/send ─────────────────────── */
 /* For demo: generates OTP and returns it (in production, send via SMS) */
-const otpStore = new Map(); // mobile -> { otp, expiresAt }
+
 
 router.post('/otp/send', (req, res) => {
   const { mobile } = req.body;
@@ -120,8 +120,10 @@ router.post('/otp/send', (req, res) => {
     return res.status(400).json({ error: 'Valid 10-digit mobile number required.' });
 
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  otpStore.set(mobile, { otp, expiresAt: Date.now() + 10 * 60 * 1000 }); // 10 min
-
+  otpStore.set(mobile, {
+  otp: otp,
+  expiresAt: Date.now() + 10 * 60 * 1000
+});
   console.log(`[OTP] Mobile: ${mobile} → OTP: ${otp}`); // In prod: send via SMS gateway
 
   /* In development/demo, return OTP in response */
